@@ -211,7 +211,6 @@ import static io.prestosql.spi.statistics.TableStatisticType.ROW_COUNT;
 import static io.prestosql.spi.type.BigintType.BIGINT;
 import static io.prestosql.spi.type.VarcharType.createUnboundedVarcharType;
 import static java.lang.String.format;
-import static java.util.Collections.emptyList;
 import static java.util.Locale.ENGLISH;
 import static java.util.Objects.requireNonNull;
 import static java.util.function.Function.identity;
@@ -575,7 +574,7 @@ public class HiveMetadata
     {
         ImmutableList.Builder<SchemaTableName> tableNames = ImmutableList.builder();
         for (String schemaName : listSchemas(session, optionalSchemaName)) {
-            for (String tableName : metastore.getAllTables(schemaName).orElse(emptyList())) {
+            for (String tableName : metastore.getAllTables(schemaName)) {
                 tableNames.add(new SchemaTableName(schemaName, tableName));
             }
         }
@@ -1599,7 +1598,7 @@ public class HiveMetadata
     {
         ImmutableList.Builder<SchemaTableName> tableNames = ImmutableList.builder();
         for (String schemaName : listSchemas(session, optionalSchemaName)) {
-            for (String tableName : metastore.getAllViews(schemaName).orElse(emptyList())) {
+            for (String tableName : metastore.getAllViews(schemaName)) {
                 tableNames.add(new SchemaTableName(schemaName, tableName));
             }
         }
@@ -1883,6 +1882,10 @@ public class HiveMetadata
         Table table = metastore.getTable(tableName.getSchemaName(), tableName.getTableName())
                 .orElseThrow(() -> new TableNotFoundException(tableName));
 
+        if (!isHiveBucketingV1(table) && table.getStorage().getBucketProperty().isPresent()) {
+            throw new PrestoException(NOT_SUPPORTED, "Table bucketing version not supported for writing");
+        }
+
         Optional<HiveBucketHandle> hiveBucketHandle = getHiveBucketHandle(table);
         if (!hiveBucketHandle.isPresent()) {
             return Optional.empty();
@@ -1891,9 +1894,6 @@ public class HiveMetadata
                 .orElseThrow(() -> new NoSuchElementException("Bucket property should be set"));
         if (!bucketProperty.getSortedBy().isEmpty() && !isSortedWritingEnabled(session)) {
             throw new PrestoException(NOT_SUPPORTED, "Writing to bucketed sorted Hive tables is disabled");
-        }
-        if (!isHiveBucketingV1(table)) {
-            throw new PrestoException(NOT_SUPPORTED, "Table bucketing version not supported for writing");
         }
 
         HivePartitioningHandle partitioningHandle = new HivePartitioningHandle(

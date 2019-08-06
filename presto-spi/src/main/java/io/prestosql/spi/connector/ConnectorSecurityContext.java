@@ -11,18 +11,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.prestosql.security;
+package io.prestosql.spi.connector;
 
-import io.prestosql.spi.security.SystemAccessControl;
-import org.testng.annotations.Test;
+import io.prestosql.spi.security.ConnectorIdentity;
 
-import static io.prestosql.spi.testing.InterfaceTestUtils.assertAllMethodsOverridden;
-
-public class TestAllowAllSystemAccessControl
+public interface ConnectorSecurityContext
 {
-    @Test
-    public void testEverythingImplemented()
-    {
-        assertAllMethodsOverridden(SystemAccessControl.class, AllowAllSystemAccessControl.class);
-    }
+    ConnectorTransactionHandle getTransactionHandle();
+
+    ConnectorIdentity getIdentity();
 }

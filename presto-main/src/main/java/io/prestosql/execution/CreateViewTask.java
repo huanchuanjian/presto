@@ -72,9 +72,9 @@ public class CreateViewTask
         Session session = stateMachine.getSession();
         QualifiedObjectName name = createQualifiedObjectName(session, statement, statement.getName());
 
-        accessControl.checkCanCreateView(session.getRequiredTransactionId(), session.getIdentity(), name);
+        accessControl.checkCanCreateView(session.toSecurityContext(), name);
 
-        String sql = getFormattedSql(statement.getQuery(), sqlParser, Optional.of(parameters));
+        String sql = getFormattedSql(statement.getQuery(), sqlParser);
 
         Analysis analysis = analyzeStatement(statement, session, metadata, accessControl, parameters, stateMachine.getWarningCollector());
 
