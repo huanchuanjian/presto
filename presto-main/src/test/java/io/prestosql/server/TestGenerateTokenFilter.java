@@ -57,16 +57,15 @@ public class TestGenerateTokenFilter
 
     @BeforeClass
     public void setup()
-            throws Exception
     {
         server = new TestingPrestoServer(ImmutableList.of(new TestGenerateTokenFilterModule()));
         httpClient = (JettyHttpClient) server.getInstance(Key.get(HttpClient.class, GenerateTokenFilterTest.class));
 
         // extract the filter
         List<HttpRequestFilter> filters = httpClient.getRequestFilters();
-        assertEquals(filters.size(), 2);
-        assertInstanceOf(filters.get(1), GenerateTraceTokenRequestFilter.class);
-        filter = (GenerateTraceTokenRequestFilter) filters.get(1);
+        assertEquals(filters.size(), 3);
+        assertInstanceOf(filters.get(2), GenerateTraceTokenRequestFilter.class);
+        filter = (GenerateTraceTokenRequestFilter) filters.get(2);
     }
 
     @AfterClass(alwaysRun = true)

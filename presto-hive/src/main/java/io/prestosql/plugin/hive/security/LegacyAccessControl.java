@@ -14,14 +14,17 @@
 package io.prestosql.plugin.hive.security;
 
 import io.prestosql.plugin.hive.HiveTransactionHandle;
+import io.prestosql.plugin.hive.authentication.HiveIdentity;
 import io.prestosql.plugin.hive.metastore.SemiTransactionalHiveMetastore;
 import io.prestosql.plugin.hive.metastore.Table;
 import io.prestosql.spi.connector.ColumnMetadata;
 import io.prestosql.spi.connector.ConnectorAccessControl;
 import io.prestosql.spi.connector.ConnectorSecurityContext;
+import io.prestosql.spi.connector.SchemaRoutineName;
 import io.prestosql.spi.connector.SchemaTableName;
 import io.prestosql.spi.security.PrestoPrincipal;
 import io.prestosql.spi.security.Privilege;
+import io.prestosql.spi.security.ViewExpression;
 
 import javax.inject.Inject;
 
@@ -36,6 +39,7 @@ import static io.prestosql.spi.security.AccessDeniedException.denyDropColumn;
 import static io.prestosql.spi.security.AccessDeniedException.denyDropTable;
 import static io.prestosql.spi.security.AccessDeniedException.denyRenameColumn;
 import static io.prestosql.spi.security.AccessDeniedException.denyRenameTable;
+import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
 public class LegacyAccessControl
@@ -81,6 +85,11 @@ public class LegacyAccessControl
     }
 
     @Override
+    public void checkCanSetSchemaAuthorization(ConnectorSecurityContext context, String schemaName, PrestoPrincipal principal)
+    {
+    }
+
+    @Override
     public void checkCanShowSchemas(ConnectorSecurityContext context)
     {
     }
@@ -89,6 +98,11 @@ public class LegacyAccessControl
     public Set<String> filterSchemas(ConnectorSecurityContext context, Set<String> schemaNames)
     {
         return schemaNames;
+    }
+
+    @Override
+    public void checkCanShowCreateTable(ConnectorSecurityContext context, SchemaTableName tableName)
+    {
     }
 
     @Override
@@ -103,14 +117,14 @@ public class LegacyAccessControl
             denyDropTable(tableName.toString());
         }
 
-        Optional<Table> target = metastoreProvider.apply(((HiveTransactionHandle) context.getTransactionHandle())).getTable(tableName.getSchemaName(), tableName.getTableName());
+        Optional<Table> target = metastoreProvider.apply(((HiveTransactionHandle) context.getTransactionHandle())).getTable(new HiveIdentity(context.getIdentity()), tableName.getSchemaName(), tableName.getTableName());
 
         if (!target.isPresent()) {
             denyDropTable(tableName.toString(), "Table not found");
         }
 
         if (!context.getIdentity().getUser().equals(target.get().getOwner())) {
-            denyDropTable(tableName.toString(), "Owner of the table is different from session user");
+            denyDropTable(tableName.toString(), format("Owner of the table ('%s') is different from session user ('%s')", target.get().getOwner(), context.getIdentity().getUser()));
         }
     }
 
@@ -130,7 +144,8 @@ public class LegacyAccessControl
         }
     }
 
-    public void checkCanShowTablesMetadata(ConnectorSecurityContext context, String schemaName)
+    @Override
+    public void checkCanShowTables(ConnectorSecurityContext context, String schemaName)
     {
     }
 
@@ -141,7 +156,7 @@ public class LegacyAccessControl
     }
 
     @Override
-    public void checkCanShowColumnsMetadata(ConnectorSecurityContext context, SchemaTableName tableName)
+    public void checkCanShowColumns(ConnectorSecurityContext context, SchemaTableName tableName)
     {
     }
 
@@ -192,6 +207,11 @@ public class LegacyAccessControl
 
     @Override
     public void checkCanCreateView(ConnectorSecurityContext context, SchemaTableName viewName)
+    {
+    }
+
+    @Override
+    public void checkCanRenameView(ConnectorSecurityContext context, SchemaTableName viewName, SchemaTableName newViewName)
     {
     }
 
@@ -258,5 +278,22 @@ public class LegacyAccessControl
     @Override
     public void checkCanShowRoleGrants(ConnectorSecurityContext context, String catalogName)
     {
+    }
+
+    @Override
+    public void checkCanExecuteProcedure(ConnectorSecurityContext context, SchemaRoutineName procedure)
+    {
+    }
+
+    @Override
+    public Optional<ViewExpression> getRowFilter(ConnectorSecurityContext context, SchemaTableName tableName)
+    {
+        return Optional.empty();
+    }
+
+    @Override
+    public Optional<ViewExpression> getColumnMask(ConnectorSecurityContext context, SchemaTableName tableName, String columnName)
+    {
+        return Optional.empty();
     }
 }

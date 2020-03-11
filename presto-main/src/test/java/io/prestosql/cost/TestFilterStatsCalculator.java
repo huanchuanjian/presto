@@ -20,13 +20,16 @@ import io.prestosql.metadata.Metadata;
 import io.prestosql.spi.type.DoubleType;
 import io.prestosql.spi.type.Type;
 import io.prestosql.spi.type.VarcharType;
+import io.prestosql.sql.parser.SqlParser;
 import io.prestosql.sql.planner.Symbol;
+import io.prestosql.sql.planner.TypeAnalyzer;
 import io.prestosql.sql.planner.TypeProvider;
 import io.prestosql.sql.tree.Expression;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
 import static io.prestosql.metadata.MetadataManager.createTestMetadataManager;
+import static io.prestosql.sql.ExpressionTestUtils.planExpression;
 import static io.prestosql.sql.planner.iterative.rule.test.PlanBuilder.expression;
 import static io.prestosql.testing.TestingSession.testSessionBuilder;
 import static java.lang.Double.NEGATIVE_INFINITY;
@@ -48,8 +51,10 @@ public class TestFilterStatsCalculator
     private SymbolStatsEstimate mediumVarcharStats;
     private FilterStatsCalculator statsCalculator;
     private PlanNodeStatsEstimate standardInputStatistics;
+    private PlanNodeStatsEstimate zeroStatistics;
     private TypeProvider standardTypes;
     private Session session;
+    private Metadata metadata;
 
     @BeforeClass
     public void setUp()
@@ -121,6 +126,17 @@ public class TestFilterStatsCalculator
                 .addSymbolStatistics(new Symbol("mediumVarchar"), mediumVarcharStats)
                 .setOutputRowCount(1000.0)
                 .build();
+        zeroStatistics = PlanNodeStatsEstimate.builder()
+                .addSymbolStatistics(new Symbol("x"), SymbolStatsEstimate.zero())
+                .addSymbolStatistics(new Symbol("y"), SymbolStatsEstimate.zero())
+                .addSymbolStatistics(new Symbol("z"), SymbolStatsEstimate.zero())
+                .addSymbolStatistics(new Symbol("leftOpen"), SymbolStatsEstimate.zero())
+                .addSymbolStatistics(new Symbol("rightOpen"), SymbolStatsEstimate.zero())
+                .addSymbolStatistics(new Symbol("unknownRange"), SymbolStatsEstimate.zero())
+                .addSymbolStatistics(new Symbol("emptyRange"), SymbolStatsEstimate.zero())
+                .addSymbolStatistics(new Symbol("mediumVarchar"), SymbolStatsEstimate.zero())
+                .setOutputRowCount(0)
+                .build();
 
         standardTypes = TypeProvider.copyOf(ImmutableMap.<Symbol, Type>builder()
                 .put(new Symbol("x"), DoubleType.DOUBLE)
@@ -134,25 +150,16 @@ public class TestFilterStatsCalculator
                 .build());
 
         session = testSessionBuilder().build();
-        Metadata metadata = createTestMetadataManager();
-        statsCalculator = new FilterStatsCalculator(metadata, new ScalarStatsCalculator(metadata), new StatsNormalizer());
+        metadata = createTestMetadataManager();
+        statsCalculator = new FilterStatsCalculator(metadata, new ScalarStatsCalculator(metadata, new TypeAnalyzer(new SqlParser(), metadata)), new StatsNormalizer());
     }
 
     @Test
     public void testBooleanLiteralStats()
     {
-        assertExpression("true")
-                .equalTo(standardInputStatistics);
-
-        assertExpression("false")
-                .outputRowsCount(0.0)
-                .symbolStats("x", SymbolStatsAssertion::empty)
-                .symbolStats("y", SymbolStatsAssertion::empty)
-                .symbolStats("z", SymbolStatsAssertion::empty)
-                .symbolStats("leftOpen", SymbolStatsAssertion::empty)
-                .symbolStats("rightOpen", SymbolStatsAssertion::empty)
-                .symbolStats("emptyRange", SymbolStatsAssertion::empty)
-                .symbolStats("unknownRange", SymbolStatsAssertion::empty);
+        assertExpression("true").equalTo(standardInputStatistics);
+        assertExpression("false").equalTo(zeroStatistics);
+        assertExpression("CAST(NULL AS boolean)").equalTo(zeroStatistics);
     }
 
     @Test
@@ -251,6 +258,8 @@ public class TestFilterStatsCalculator
     @Test
     public void testAndStats()
     {
+        assertExpression("x < 0e0 AND x > 1e0").equalTo(zeroStatistics);
+
         assertExpression("x < 0e0 AND x > DOUBLE '-7.5'")
                 .outputRowsCount(281.25)
                 .symbolStats(new Symbol("x"), symbolAssert ->
@@ -290,6 +299,9 @@ public class TestFilterStatsCalculator
 
         assertExpression("'a' IN ('b', 'c') AND unknownRange = 3e0")
                 .outputRowsCount(0);
+
+        assertExpression("CAST(NULL AS boolean) AND CAST(NULL AS boolean)").equalTo(zeroStatistics);
+        assertExpression("CAST(NULL AS boolean) AND (x < 0e0 AND x > 1e0)").equalTo(zeroStatistics);
     }
 
     @Test
@@ -562,7 +574,7 @@ public class TestFilterStatsCalculator
 
     private PlanNodeStatsAssertion assertExpression(String expression)
     {
-        return assertExpression(expression(expression));
+        return assertExpression(planExpression(metadata, session, standardTypes, expression(expression)));
     }
 
     private PlanNodeStatsAssertion assertExpression(Expression expression)

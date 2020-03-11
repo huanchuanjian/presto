@@ -16,9 +16,11 @@ package io.prestosql.plugin.base.security;
 import io.prestosql.spi.connector.ColumnMetadata;
 import io.prestosql.spi.connector.ConnectorAccessControl;
 import io.prestosql.spi.connector.ConnectorSecurityContext;
+import io.prestosql.spi.connector.SchemaRoutineName;
 import io.prestosql.spi.connector.SchemaTableName;
 import io.prestosql.spi.security.PrestoPrincipal;
 import io.prestosql.spi.security.Privilege;
+import io.prestosql.spi.security.ViewExpression;
 
 import java.util.List;
 import java.util.Optional;
@@ -64,6 +66,12 @@ public abstract class ForwardingConnectorAccessControl
     }
 
     @Override
+    public void checkCanSetSchemaAuthorization(ConnectorSecurityContext context, String schemaName, PrestoPrincipal principal)
+    {
+        delegate().checkCanSetSchemaAuthorization(context, schemaName, principal);
+    }
+
+    @Override
     public void checkCanShowSchemas(ConnectorSecurityContext context)
     {
         delegate().checkCanShowSchemas(context);
@@ -73,6 +81,12 @@ public abstract class ForwardingConnectorAccessControl
     public Set<String> filterSchemas(ConnectorSecurityContext context, Set<String> schemaNames)
     {
         return delegate().filterSchemas(context, schemaNames);
+    }
+
+    @Override
+    public void checkCanShowCreateTable(ConnectorSecurityContext context, SchemaTableName tableName)
+    {
+        delegate().checkCanShowCreateTable(context, tableName);
     }
 
     @Override
@@ -100,9 +114,9 @@ public abstract class ForwardingConnectorAccessControl
     }
 
     @Override
-    public void checkCanShowTablesMetadata(ConnectorSecurityContext context, String schemaName)
+    public void checkCanShowTables(ConnectorSecurityContext context, String schemaName)
     {
-        delegate().checkCanShowTablesMetadata(context, schemaName);
+        delegate().checkCanShowTables(context, schemaName);
     }
 
     @Override
@@ -112,9 +126,9 @@ public abstract class ForwardingConnectorAccessControl
     }
 
     @Override
-    public void checkCanShowColumnsMetadata(ConnectorSecurityContext context, SchemaTableName tableName)
+    public void checkCanShowColumns(ConnectorSecurityContext context, SchemaTableName tableName)
     {
-        delegate().checkCanShowColumnsMetadata(context, tableName);
+        delegate().checkCanShowColumns(context, tableName);
     }
 
     @Override
@@ -163,6 +177,12 @@ public abstract class ForwardingConnectorAccessControl
     public void checkCanCreateView(ConnectorSecurityContext context, SchemaTableName viewName)
     {
         delegate().checkCanCreateView(context, viewName);
+    }
+
+    @Override
+    public void checkCanRenameView(ConnectorSecurityContext context, SchemaTableName viewName, SchemaTableName newViewName)
+    {
+        delegate().checkCanRenameView(context, viewName, newViewName);
     }
 
     @Override
@@ -241,5 +261,23 @@ public abstract class ForwardingConnectorAccessControl
     public void checkCanShowRoleGrants(ConnectorSecurityContext context, String catalogName)
     {
         delegate().checkCanShowRoleGrants(context, catalogName);
+    }
+
+    @Override
+    public void checkCanExecuteProcedure(ConnectorSecurityContext context, SchemaRoutineName procedure)
+    {
+        delegate().checkCanExecuteProcedure(context, procedure);
+    }
+
+    @Override
+    public Optional<ViewExpression> getRowFilter(ConnectorSecurityContext context, SchemaTableName tableName)
+    {
+        return delegate().getRowFilter(context, tableName);
+    }
+
+    @Override
+    public Optional<ViewExpression> getColumnMask(ConnectorSecurityContext context, SchemaTableName tableName, String columnName)
+    {
+        return delegate().getColumnMask(context, tableName, columnName);
     }
 }

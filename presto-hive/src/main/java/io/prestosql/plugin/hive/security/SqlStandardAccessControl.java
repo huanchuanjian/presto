@@ -16,18 +16,22 @@ package io.prestosql.plugin.hive.security;
 import com.google.common.collect.ImmutableList;
 import io.prestosql.plugin.hive.HiveCatalogName;
 import io.prestosql.plugin.hive.HiveTransactionHandle;
+import io.prestosql.plugin.hive.authentication.HiveIdentity;
 import io.prestosql.plugin.hive.metastore.Database;
 import io.prestosql.plugin.hive.metastore.HivePrincipal;
+import io.prestosql.plugin.hive.metastore.HivePrivilegeInfo;
 import io.prestosql.plugin.hive.metastore.SemiTransactionalHiveMetastore;
 import io.prestosql.spi.connector.ColumnMetadata;
 import io.prestosql.spi.connector.ConnectorAccessControl;
 import io.prestosql.spi.connector.ConnectorSecurityContext;
+import io.prestosql.spi.connector.SchemaRoutineName;
 import io.prestosql.spi.connector.SchemaTableName;
 import io.prestosql.spi.security.AccessDeniedException;
 import io.prestosql.spi.security.ConnectorIdentity;
 import io.prestosql.spi.security.PrestoPrincipal;
 import io.prestosql.spi.security.Privilege;
 import io.prestosql.spi.security.RoleGrant;
+import io.prestosql.spi.security.ViewExpression;
 
 import javax.inject.Inject;
 
@@ -36,6 +40,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 
+import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static io.prestosql.plugin.hive.metastore.Database.DEFAULT_DATABASE_NAME;
 import static io.prestosql.plugin.hive.metastore.HivePrivilegeInfo.HivePrivilege;
 import static io.prestosql.plugin.hive.metastore.HivePrivilegeInfo.HivePrivilege.DELETE;
@@ -47,7 +52,7 @@ import static io.prestosql.plugin.hive.metastore.thrift.ThriftMetastoreUtil.isRo
 import static io.prestosql.plugin.hive.metastore.thrift.ThriftMetastoreUtil.isRoleEnabled;
 import static io.prestosql.plugin.hive.metastore.thrift.ThriftMetastoreUtil.listApplicableRoles;
 import static io.prestosql.plugin.hive.metastore.thrift.ThriftMetastoreUtil.listApplicableTablePrivileges;
-import static io.prestosql.plugin.hive.metastore.thrift.ThriftMetastoreUtil.listEnabledTablePrivileges;
+import static io.prestosql.plugin.hive.metastore.thrift.ThriftMetastoreUtil.listEnabledPrincipals;
 import static io.prestosql.spi.security.AccessDeniedException.denyAddColumn;
 import static io.prestosql.spi.security.AccessDeniedException.denyCommentTable;
 import static io.prestosql.spi.security.AccessDeniedException.denyCreateRole;
@@ -67,12 +72,15 @@ import static io.prestosql.spi.security.AccessDeniedException.denyInsertTable;
 import static io.prestosql.spi.security.AccessDeniedException.denyRenameColumn;
 import static io.prestosql.spi.security.AccessDeniedException.denyRenameSchema;
 import static io.prestosql.spi.security.AccessDeniedException.denyRenameTable;
+import static io.prestosql.spi.security.AccessDeniedException.denyRenameView;
 import static io.prestosql.spi.security.AccessDeniedException.denyRevokeRoles;
 import static io.prestosql.spi.security.AccessDeniedException.denyRevokeTablePrivilege;
 import static io.prestosql.spi.security.AccessDeniedException.denySelectTable;
 import static io.prestosql.spi.security.AccessDeniedException.denySetCatalogSessionProperty;
 import static io.prestosql.spi.security.AccessDeniedException.denySetRole;
-import static io.prestosql.spi.security.AccessDeniedException.denyShowColumnsMetadata;
+import static io.prestosql.spi.security.AccessDeniedException.denySetSchemaAuthorization;
+import static io.prestosql.spi.security.AccessDeniedException.denyShowColumns;
+import static io.prestosql.spi.security.AccessDeniedException.denyShowCreateTable;
 import static io.prestosql.spi.security.AccessDeniedException.denyShowRoles;
 import static io.prestosql.spi.security.PrincipalType.ROLE;
 import static io.prestosql.spi.security.PrincipalType.USER;
@@ -123,6 +131,14 @@ public class SqlStandardAccessControl
     }
 
     @Override
+    public void checkCanSetSchemaAuthorization(ConnectorSecurityContext context, String schemaName, PrestoPrincipal principal)
+    {
+        if (!isDatabaseOwner(context, schemaName)) {
+            denySetSchemaAuthorization(schemaName, principal);
+        }
+    }
+
+    @Override
     public void checkCanShowSchemas(ConnectorSecurityContext context)
     {
     }
@@ -131,6 +147,15 @@ public class SqlStandardAccessControl
     public Set<String> filterSchemas(ConnectorSecurityContext context, Set<String> schemaNames)
     {
         return schemaNames;
+    }
+
+    @Override
+    public void checkCanShowCreateTable(ConnectorSecurityContext context, SchemaTableName tableName)
+    {
+        // This should really be OWNERSHIP, but Hive uses `SELECT with GRANT`
+        if (!checkTablePermission(context, tableName, SELECT, true)) {
+            denyShowCreateTable(tableName.toString());
+        }
     }
 
     @Override
@@ -166,7 +191,7 @@ public class SqlStandardAccessControl
     }
 
     @Override
-    public void checkCanShowTablesMetadata(ConnectorSecurityContext context, String schemaName)
+    public void checkCanShowTables(ConnectorSecurityContext context, String schemaName)
     {
     }
 
@@ -177,10 +202,10 @@ public class SqlStandardAccessControl
     }
 
     @Override
-    public void checkCanShowColumnsMetadata(ConnectorSecurityContext context, SchemaTableName tableName)
+    public void checkCanShowColumns(ConnectorSecurityContext context, SchemaTableName tableName)
     {
         if (!hasAnyTablePermission(context, tableName)) {
-            denyShowColumnsMetadata(tableName.toString());
+            denyShowColumns(tableName.toString());
         }
     }
 
@@ -247,6 +272,14 @@ public class SqlStandardAccessControl
     {
         if (!isDatabaseOwner(context, viewName.getSchemaName())) {
             denyCreateView(viewName.toString());
+        }
+    }
+
+    @Override
+    public void checkCanRenameView(ConnectorSecurityContext context, SchemaTableName viewName, SchemaTableName newViewName)
+    {
+        if (!isTableOwner(context, viewName)) {
+            denyRenameView(viewName.toString(), newViewName.toString());
         }
     }
 
@@ -372,6 +405,23 @@ public class SqlStandardAccessControl
     {
     }
 
+    @Override
+    public void checkCanExecuteProcedure(ConnectorSecurityContext context, SchemaRoutineName procedure)
+    {
+    }
+
+    @Override
+    public Optional<ViewExpression> getRowFilter(ConnectorSecurityContext context, SchemaTableName tableName)
+    {
+        return Optional.empty();
+    }
+
+    @Override
+    public Optional<ViewExpression> getColumnMask(ConnectorSecurityContext context, SchemaTableName tableName, String columnName)
+    {
+        return Optional.empty();
+    }
+
     private boolean isAdmin(ConnectorSecurityContext context)
     {
         SemiTransactionalHiveMetastore metastore = metastoreProvider.apply(((HiveTransactionHandle) context.getTransactionHandle()));
@@ -432,9 +482,15 @@ public class SqlStandardAccessControl
         }
 
         SemiTransactionalHiveMetastore metastore = metastoreProvider.apply(((HiveTransactionHandle) context.getTransactionHandle()));
-        return listEnabledTablePrivileges(metastore, tableName.getSchemaName(), tableName.getTableName(), context.getIdentity())
+
+        Set<HivePrincipal> allowedPrincipals = metastore.listTablePrivileges(new HiveIdentity(context.getIdentity()), tableName.getSchemaName(), tableName.getTableName(), Optional.empty()).stream()
+                .filter(privilegeInfo -> privilegeInfo.getHivePrivilege() == requiredPrivilege)
                 .filter(privilegeInfo -> !grantOptionRequired || privilegeInfo.isGrantOption())
-                .anyMatch(privilegeInfo -> privilegeInfo.getHivePrivilege().equals(requiredPrivilege));
+                .map(HivePrivilegeInfo::getGrantee)
+                .collect(toImmutableSet());
+
+        return listEnabledPrincipals(metastore, context.getIdentity())
+                .anyMatch(allowedPrincipals::contains);
     }
 
     private boolean hasGrantOptionForPrivilege(ConnectorSecurityContext context, Privilege privilege, SchemaTableName tableName)
@@ -448,8 +504,8 @@ public class SqlStandardAccessControl
                 metastore,
                 tableName.getSchemaName(),
                 tableName.getTableName(),
-                context.getIdentity().getUser())
-                .anyMatch(privilegeInfo -> privilegeInfo.getHivePrivilege().equals(toHivePrivilege(privilege)) && privilegeInfo.isGrantOption());
+                context.getIdentity())
+                .anyMatch(privilegeInfo -> privilegeInfo.getHivePrivilege() == toHivePrivilege(privilege) && privilegeInfo.isGrantOption());
     }
 
     private boolean hasAdminOptionForRoles(ConnectorSecurityContext context, Set<String> roles)
@@ -481,7 +537,11 @@ public class SqlStandardAccessControl
         }
 
         SemiTransactionalHiveMetastore metastore = metastoreProvider.apply(((HiveTransactionHandle) context.getTransactionHandle()));
-        return listEnabledTablePrivileges(metastore, tableName.getSchemaName(), tableName.getTableName(), context.getIdentity())
-                .anyMatch(privilegeInfo -> true);
+        Set<HivePrincipal> allowedPrincipals = metastore.listTablePrivileges(new HiveIdentity(context.getIdentity()), tableName.getSchemaName(), tableName.getTableName(), Optional.empty()).stream()
+                .map(HivePrivilegeInfo::getGrantee)
+                .collect(toImmutableSet());
+
+        return listEnabledPrincipals(metastore, context.getIdentity())
+                .anyMatch(allowedPrincipals::contains);
     }
 }

@@ -19,6 +19,7 @@ import io.airlift.units.Duration;
 import io.prestosql.execution.QueryManagerConfig;
 import io.prestosql.execution.TaskManagerConfig;
 import io.prestosql.memory.MemoryManagerConfig;
+import io.prestosql.memory.NodeMemoryConfig;
 import io.prestosql.spi.PrestoException;
 import io.prestosql.spi.session.PropertyMetadata;
 import io.prestosql.sql.analyzer.FeaturesConfig;
@@ -34,14 +35,13 @@ import java.util.OptionalInt;
 import static com.google.common.base.Preconditions.checkArgument;
 import static io.prestosql.spi.StandardErrorCode.INVALID_SESSION_PROPERTY;
 import static io.prestosql.spi.session.PropertyMetadata.booleanProperty;
-import static io.prestosql.spi.session.PropertyMetadata.dataSizeProperty;
-import static io.prestosql.spi.session.PropertyMetadata.durationProperty;
 import static io.prestosql.spi.session.PropertyMetadata.enumProperty;
 import static io.prestosql.spi.session.PropertyMetadata.integerProperty;
 import static io.prestosql.spi.session.PropertyMetadata.stringProperty;
 import static io.prestosql.spi.type.BigintType.BIGINT;
 import static io.prestosql.spi.type.BooleanType.BOOLEAN;
 import static io.prestosql.spi.type.IntegerType.INTEGER;
+import static io.prestosql.spi.type.VarcharType.VARCHAR;
 import static io.prestosql.sql.analyzer.FeaturesConfig.JoinReorderingStrategy.ELIMINATE_CROSS_JOINS;
 import static io.prestosql.sql.analyzer.FeaturesConfig.JoinReorderingStrategy.NONE;
 import static java.lang.Math.min;
@@ -69,6 +69,7 @@ public final class SystemSessionProperties
     public static final String QUERY_MAX_CPU_TIME = "query_max_cpu_time";
     public static final String QUERY_MAX_STAGE_COUNT = "query_max_stage_count";
     public static final String REDISTRIBUTE_WRITES = "redistribute_writes";
+    public static final String USE_PREFERRED_WRITE_PARTITIONING = "use_preferred_write_partitioning";
     public static final String SCALE_WRITERS = "scale_writers";
     public static final String WRITER_MIN_SIZE = "writer_min_size";
     public static final String PUSH_TABLE_WRITE_THROUGH_UNION = "push_table_write_through_union";
@@ -111,19 +112,28 @@ public final class SystemSessionProperties
     public static final String MAX_GROUPING_SETS = "max_grouping_sets";
     public static final String STATISTICS_CPU_TIMER_ENABLED = "statistics_cpu_timer_enabled";
     public static final String ENABLE_STATS_CALCULATOR = "enable_stats_calculator";
+    public static final String COLLECT_PLAN_STATISTICS_FOR_ALL_QUERIES = "collect_plan_statistics_for_all_queries";
     public static final String IGNORE_STATS_CALCULATOR_FAILURES = "ignore_stats_calculator_failures";
     public static final String MAX_DRIVERS_PER_TASK = "max_drivers_per_task";
     public static final String DEFAULT_FILTER_FACTOR_ENABLED = "default_filter_factor_enabled";
     public static final String UNWRAP_CASTS = "unwrap_casts";
     public static final String SKIP_REDUNDANT_SORT = "skip_redundant_sort";
-    public static final String WORK_PROCESSOR_PIPELINES = "work_processor_pipelines";
+    public static final String PREDICATE_PUSHDOWN_USE_TABLE_PROPERTIES = "predicate_pushdown_use_table_properties";
+    public static final String LATE_MATERIALIZATION = "late_materialization";
     public static final String ENABLE_DYNAMIC_FILTERING = "enable_dynamic_filtering";
+    public static final String QUERY_MAX_MEMORY_PER_NODE = "query_max_memory_per_node";
+    public static final String QUERY_MAX_TOTAL_MEMORY_PER_NODE = "query_max_total_memory_per_node";
+    public static final String DYNAMIC_FILTERING_MAX_PER_DRIVER_ROW_COUNT = "dynamic_filtering_max_per_driver_row_count";
+    public static final String DYNAMIC_FILTERING_MAX_PER_DRIVER_SIZE = "dynamic_filtering_max_per_driver_size";
+    public static final String IGNORE_DOWNSTREAM_PREFERENCES = "ignore_downstream_preferences";
+    public static final String REQUIRED_WORKERS_COUNT = "required_workers_count";
+    public static final String REQUIRED_WORKERS_MAX_WAIT_TIME = "required_workers_max_wait_time";
 
     private final List<PropertyMetadata<?>> sessionProperties;
 
     public SystemSessionProperties()
     {
-        this(new QueryManagerConfig(), new TaskManagerConfig(), new MemoryManagerConfig(), new FeaturesConfig());
+        this(new QueryManagerConfig(), new TaskManagerConfig(), new MemoryManagerConfig(), new FeaturesConfig(), new NodeMemoryConfig());
     }
 
     @Inject
@@ -131,7 +141,8 @@ public final class SystemSessionProperties
             QueryManagerConfig queryManagerConfig,
             TaskManagerConfig taskManagerConfig,
             MemoryManagerConfig memoryManagerConfig,
-            FeaturesConfig featuresConfig)
+            FeaturesConfig featuresConfig,
+            NodeMemoryConfig nodeMemoryConfig)
     {
         sessionProperties = ImmutableList.of(
                 stringProperty(
@@ -193,6 +204,11 @@ public final class SystemSessionProperties
                         REDISTRIBUTE_WRITES,
                         "Force parallel distributed writes",
                         featuresConfig.isRedistributeWrites(),
+                        false),
+                booleanProperty(
+                        USE_PREFERRED_WRITE_PARTITIONING,
+                        "Use preferred write partitioning",
+                        featuresConfig.isUsePreferredWritePartitioning(),
                         false),
                 booleanProperty(
                         SCALE_WRITERS,
@@ -341,7 +357,7 @@ public final class SystemSessionProperties
                         false),
                 new PropertyMetadata<>(
                         SPILL_ENABLED,
-                        "Experimental: Enable spilling",
+                        "Enable spilling",
                         BOOLEAN,
                         Boolean.class,
                         featuresConfig.isSpillEnabled(),
@@ -368,7 +384,7 @@ public final class SystemSessionProperties
                         false),
                 dataSizeProperty(
                         AGGREGATION_OPERATOR_UNSPILL_MEMORY_LIMIT,
-                        "Experimental: How much memory can should be allocated per aggragation operator in unspilling process",
+                        "How much memory should be allocated per aggregation operator in unspilling process",
                         featuresConfig.getAggregationOperatorUnspillMemoryLimit(),
                         false),
                 booleanProperty(
@@ -378,7 +394,7 @@ public final class SystemSessionProperties
                         false),
                 booleanProperty(
                         ITERATIVE_OPTIMIZER,
-                        "Experimental: enable iterative optimizer",
+                        "Enable iterative optimizer",
                         featuresConfig.isIterativeOptimizerEnabled(),
                         false),
                 durationProperty(
@@ -468,8 +484,13 @@ public final class SystemSessionProperties
                         false),
                 booleanProperty(
                         ENABLE_STATS_CALCULATOR,
-                        "Experimental: Enable statistics calculator",
+                        "Enable statistics calculator",
                         featuresConfig.isEnableStatsCalculator(),
+                        false),
+                booleanProperty(
+                        COLLECT_PLAN_STATISTICS_FOR_ALL_QUERIES,
+                        "Collect plan statistics for non-EXPLAIN queries",
+                        featuresConfig.isCollectPlanStatisticsForAllQueries(),
                         false),
                 new PropertyMetadata<>(
                         MAX_DRIVERS_PER_TASK,
@@ -501,14 +522,54 @@ public final class SystemSessionProperties
                         featuresConfig.isSkipRedundantSort(),
                         false),
                 booleanProperty(
-                        WORK_PROCESSOR_PIPELINES,
-                        "Experimental: Use WorkProcessor pipelines",
-                        featuresConfig.isWorkProcessorPipelines(),
+                        PREDICATE_PUSHDOWN_USE_TABLE_PROPERTIES,
+                        "Use table properties in predicate pushdown",
+                        featuresConfig.isPredicatePushdownUseTableProperties(),
+                        false),
+                booleanProperty(
+                        LATE_MATERIALIZATION,
+                        "Experimental: Use late materialization (including WorkProcessor pipelines)",
+                        featuresConfig.isLateMaterializationEnabled(),
                         false),
                 booleanProperty(
                         ENABLE_DYNAMIC_FILTERING,
                         "Enable dynamic filtering",
                         featuresConfig.isEnableDynamicFiltering(),
+                        false),
+                dataSizeProperty(
+                        QUERY_MAX_MEMORY_PER_NODE,
+                        "Maximum amount of memory a query can use per node",
+                        nodeMemoryConfig.getMaxQueryMemoryPerNode(),
+                        true),
+                dataSizeProperty(
+                        QUERY_MAX_TOTAL_MEMORY_PER_NODE,
+                        "Maximum amount of total memory a query can use per node",
+                        nodeMemoryConfig.getMaxQueryTotalMemoryPerNode(),
+                        true),
+                integerProperty(
+                        DYNAMIC_FILTERING_MAX_PER_DRIVER_ROW_COUNT,
+                        "Experimental: maximum number of build-side rows to be collected for dynamic filtering per-driver",
+                        featuresConfig.getDynamicFilteringMaxPerDriverRowCount(),
+                        false),
+                dataSizeProperty(
+                        DYNAMIC_FILTERING_MAX_PER_DRIVER_SIZE,
+                        "Experimental: maximum number of bytes to be collected for dynamic filtering per-driver",
+                        featuresConfig.getDynamicFilteringMaxPerDriverSize(),
+                        false),
+                booleanProperty(
+                        IGNORE_DOWNSTREAM_PREFERENCES,
+                        "Ignore Parent's PreferredProperties in AddExchange optimizer",
+                        featuresConfig.isIgnoreDownstreamPreferences(),
+                        false),
+                integerProperty(
+                        REQUIRED_WORKERS_COUNT,
+                        "Minimum number of active workers that must be available before the query will start",
+                        queryManagerConfig.getRequiredWorkers(),
+                        false),
+                durationProperty(
+                        REQUIRED_WORKERS_MAX_WAIT_TIME,
+                        "Maximum time to wait for minimum number of workers before the query is failed",
+                        queryManagerConfig.getRequiredWorkersMaxWait(),
                         false));
     }
 
@@ -532,9 +593,9 @@ public final class SystemSessionProperties
         return session.getSystemProperty(JOIN_DISTRIBUTION_TYPE, JoinDistributionType.class);
     }
 
-    public static Optional<DataSize> getJoinMaxBroadcastTableSize(Session session)
+    public static DataSize getJoinMaxBroadcastTableSize(Session session)
     {
-        return Optional.ofNullable(session.getSystemProperty(JOIN_MAX_BROADCAST_TABLE_SIZE, DataSize.class));
+        return session.getSystemProperty(JOIN_MAX_BROADCAST_TABLE_SIZE, DataSize.class);
     }
 
     public static boolean isDistributedIndexJoinEnabled(Session session)
@@ -570,6 +631,11 @@ public final class SystemSessionProperties
     public static boolean isRedistributeWrites(Session session)
     {
         return session.getSystemProperty(REDISTRIBUTE_WRITES, Boolean.class);
+    }
+
+    public static boolean isUsePreferredWritePartitioning(Session session)
+    {
+        return session.getSystemProperty(USE_PREFERRED_WRITE_PARTITIONING, Boolean.class);
     }
 
     public static boolean isScaleWriters(Session session)
@@ -685,10 +751,8 @@ public final class SystemSessionProperties
         if (result == 0) {
             return OptionalInt.empty();
         }
-        else {
-            checkArgument(result > 0, "Concurrent lifespans per node must be positive if set to non-zero");
-            return OptionalInt.of(result);
-        }
+        checkArgument(result > 0, "Concurrent lifespans per node is negative: %s", result);
+        return OptionalInt.of(result);
     }
 
     public static int getInitialSplitsPerNode(Session session)
@@ -877,6 +941,11 @@ public final class SystemSessionProperties
         return session.getSystemProperty(ENABLE_STATS_CALCULATOR, Boolean.class);
     }
 
+    public static boolean isCollectPlanStatisticsForAllQueries(Session session)
+    {
+        return session.getSystemProperty(COLLECT_PLAN_STATISTICS_FOR_ALL_QUERIES, Boolean.class);
+    }
+
     public static boolean isIgnoreStatsCalculatorFailures(Session session)
     {
         return session.getSystemProperty(IGNORE_STATS_CALCULATOR_FAILURES, Boolean.class);
@@ -897,13 +966,79 @@ public final class SystemSessionProperties
         return session.getSystemProperty(SKIP_REDUNDANT_SORT, Boolean.class);
     }
 
-    public static boolean isWorkProcessorPipelines(Session session)
+    public static boolean isPredicatePushdownUseTableProperties(Session session)
     {
-        return session.getSystemProperty(WORK_PROCESSOR_PIPELINES, Boolean.class);
+        return session.getSystemProperty(PREDICATE_PUSHDOWN_USE_TABLE_PROPERTIES, Boolean.class);
+    }
+
+    public static boolean isLateMaterializationEnabled(Session session)
+    {
+        return session.getSystemProperty(LATE_MATERIALIZATION, Boolean.class);
     }
 
     public static boolean isEnableDynamicFiltering(Session session)
     {
         return session.getSystemProperty(ENABLE_DYNAMIC_FILTERING, Boolean.class);
+    }
+
+    public static DataSize getQueryMaxMemoryPerNode(Session session)
+    {
+        return session.getSystemProperty(QUERY_MAX_MEMORY_PER_NODE, DataSize.class);
+    }
+
+    public static DataSize getQueryMaxTotalMemoryPerNode(Session session)
+    {
+        return session.getSystemProperty(QUERY_MAX_TOTAL_MEMORY_PER_NODE, DataSize.class);
+    }
+
+    public static int getDynamicFilteringMaxPerDriverRowCount(Session session)
+    {
+        return session.getSystemProperty(DYNAMIC_FILTERING_MAX_PER_DRIVER_ROW_COUNT, Integer.class);
+    }
+
+    public static DataSize getDynamicFilteringMaxPerDriverSize(Session session)
+    {
+        return session.getSystemProperty(DYNAMIC_FILTERING_MAX_PER_DRIVER_SIZE, DataSize.class);
+    }
+
+    public static boolean ignoreDownStreamPreferences(Session session)
+    {
+        return session.getSystemProperty(IGNORE_DOWNSTREAM_PREFERENCES, Boolean.class);
+    }
+
+    private static PropertyMetadata<DataSize> dataSizeProperty(String name, String description, DataSize defaultValue, boolean hidden)
+    {
+        return new PropertyMetadata<>(
+                name,
+                description,
+                VARCHAR,
+                DataSize.class,
+                defaultValue,
+                hidden,
+                value -> DataSize.valueOf((String) value),
+                DataSize::toString);
+    }
+
+    private static PropertyMetadata<Duration> durationProperty(String name, String description, Duration defaultValue, boolean hidden)
+    {
+        return new PropertyMetadata<>(
+                name,
+                description,
+                VARCHAR,
+                Duration.class,
+                defaultValue,
+                hidden,
+                value -> Duration.valueOf((String) value),
+                Duration::toString);
+    }
+
+    public static int getRequiredWorkers(Session session)
+    {
+        return session.getSystemProperty(REQUIRED_WORKERS_COUNT, Integer.class);
+    }
+
+    public static Duration getRequiredWorkersMaxWait(Session session)
+    {
+        return session.getSystemProperty(REQUIRED_WORKERS_MAX_WAIT_TIME, Duration.class);
     }
 }

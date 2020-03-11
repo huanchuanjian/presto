@@ -127,6 +127,7 @@ public interface ConnectorMetadata
      * The provided table layout handle must be one that the connector can transparently convert to from
      * the original partitioning handle associated with the provided table layout handle,
      * as promised by {@link #getCommonPartitioningHandle}.
+     *
      * @deprecated use the version without layouts
      */
     @Deprecated
@@ -193,7 +194,7 @@ public interface ConnectorMetadata
     }
 
     /**
-     * Gets all of the columns on the specified table, or an empty map if the columns can not be enumerated.
+     * Gets all of the columns on the specified table, or an empty map if the columns cannot be enumerated.
      *
      * @throws RuntimeException if table handle is no longer valid
      */
@@ -255,6 +256,14 @@ public interface ConnectorMetadata
     }
 
     /**
+     * Sets the user/role on the specified schema.
+     */
+    default void setSchemaAuthorization(ConnectorSession session, String source, PrestoPrincipal principal)
+    {
+        throw new PrestoException(NOT_SUPPORTED, "This connector does not support setting an owner on a schema");
+    }
+
+    /**
      * Creates a table using the specified table metadata.
      *
      * @throws PrestoException with {@code ALREADY_EXISTS} if the table already exists and {@param ignoreExisting} is not set
@@ -267,7 +276,7 @@ public interface ConnectorMetadata
     /**
      * Drops the specified table
      *
-     * @throws RuntimeException if the table can not be dropped or table handle is no longer valid
+     * @throws RuntimeException if the table cannot be dropped or table handle is no longer valid
      */
     default void dropTable(ConnectorSession session, ConnectorTableHandle tableHandle)
     {
@@ -390,19 +399,8 @@ public interface ConnectorMetadata
 
     /**
      * Start a SELECT/UPDATE/INSERT/DELETE query. This notification is triggered after the planning phase completes.
-     *
-     * @deprecated Use {@link #beginQuery(ConnectorSession, Collection)} instead.
      */
-    @Deprecated
     default void beginQuery(ConnectorSession session) {}
-
-    /**
-     * Start a SELECT/UPDATE/INSERT/DELETE query. This notification is triggered after the planning phase completes.
-     */
-    default void beginQuery(ConnectorSession session, Collection<ConnectorTableHandle> tableHandles)
-    {
-        beginQuery(session);
-    }
 
     /**
      * Cleanup after a SELECT/UPDATE/INSERT/DELETE query. This is the very last notification after the query finishes, whether it succeeds or fails.
@@ -411,11 +409,28 @@ public interface ConnectorMetadata
     default void cleanupQuery(ConnectorSession session) {}
 
     /**
-     * Begin insert query
+     * @deprecated Use {@link #beginInsert(ConnectorSession, ConnectorTableHandle, List)} instead.
      */
+    @Deprecated
     default ConnectorInsertTableHandle beginInsert(ConnectorSession session, ConnectorTableHandle tableHandle)
     {
         throw new PrestoException(NOT_SUPPORTED, "This connector does not support inserts");
+    }
+
+    /**
+     * Begin insert query
+     */
+    default ConnectorInsertTableHandle beginInsert(ConnectorSession session, ConnectorTableHandle tableHandle, List<ColumnHandle> columns)
+    {
+        return beginInsert(session, tableHandle);
+    }
+
+    /**
+     * @return whether connector handles missing columns during insert
+     */
+    default boolean supportsMissingColumnsOnInsert()
+    {
+        return false;
     }
 
     /**
@@ -461,6 +476,14 @@ public interface ConnectorMetadata
     default void createView(ConnectorSession session, SchemaTableName viewName, ConnectorViewDefinition definition, boolean replace)
     {
         throw new PrestoException(NOT_SUPPORTED, "This connector does not support creating views");
+    }
+
+    /**
+     * Rename the specified view
+     */
+    default void renameView(ConnectorSession session, SchemaTableName source, SchemaTableName target)
+    {
+        throw new PrestoException(NOT_SUPPORTED, "This connector does not support renaming views");
     }
 
     /**
@@ -720,10 +743,10 @@ public interface ConnectorMetadata
      * invocation, even if the connector generally supports pushdown. Doing otherwise can cause the optimizer
      * to loop indefinitely.
      * </p>
-     *
+     * <p>
      * If the method returns a result, the list of projections in the result *replaces* the existing ones, and the
      * list of assignments is the new set of columns exposed by the derived table.
-     *
+     * <p>
      * As an example, given the following plan:
      *
      * <pre>
@@ -736,7 +759,7 @@ public interface ConnectorMetadata
      *       b = CH1
      *       c = CH2
      * </pre>
-     *
+     * <p>
      * The optimizer would call {@link #applyProjection} with the following arguments:
      *
      * <pre>
@@ -752,7 +775,7 @@ public interface ConnectorMetadata
      *     c = CH2
      * ]
      * </pre>
-     *
+     * <p>
      * Assuming the connector knows how to handle f1(...) and f2(...), it would return:
      *
      * <pre>
@@ -791,4 +814,13 @@ public interface ConnectorMetadata
     {
         return Optional.empty();
     }
+
+    /**
+     * Allows the connector to reject the table scan produced by the planner.
+     * <p>
+     * Connectors can choose to reject a query based on the table scan potentially being too expensive, for example
+     * if no filtering is done on a partition column.
+     * <p>
+     */
+    default void validateScan(ConnectorSession session, ConnectorTableHandle handle) {}
 }
